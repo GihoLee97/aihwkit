@@ -18,7 +18,7 @@ namespace RPU {
 namespace {
 #define UPDATE_ONCE                                                                                \
   {                                                                                                \
-    int sector = (int)((w - wmin - (T)0.000001)/(wmax - wmin)*num_sectors);                        \
+    int sector = (int)((w - wmin)/(wmax - wmin)*num_sectors);                        \
     T stoch_value = curand_normal(&local_state);                                                   \
     stoch_value *= noise_std_dw;                                                                   \
     if (!(negative > 0)) {                                                                         \
@@ -28,8 +28,8 @@ namespace {
         w += (global_pars[sector*6+2]*w*w + global_pars[sector*6+1+2]*w + global_pars[sector*6+2+2])     \
                                         * ((T)1.0 + stoch_value);                                  \
     }                                                                                              \
-    w = (w > wmax) ? wmax : w;                                                                     \
-    w = (w < wmin) ? wmin : w;                                                                     \
+    w = (w > wmax) ? wmax - (T)0.000001 : w;                                                                     \
+    w = (w < wmin) ? wmin + (T)0.000001: w;                                                                     \
   }
     
 
