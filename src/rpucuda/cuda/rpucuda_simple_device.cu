@@ -1,5 +1,5 @@
 /**
- * (C) Copyright 2020, 2021 IBM. All Rights Reserved.
+ * (C) Copyright 2020, 2021, 2022 IBM. All Rights Reserved.
  *
  * This code is licensed under the Apache License, Version 2.0. You may
  * obtain a copy of this license in the LICENSE.txt file in the root directory
@@ -22,6 +22,7 @@
 #include "rpucuda_linearstep_device.h"
 #include "rpucuda_mixedprec_device.h"
 #include "rpucuda_onesided_device.h"
+#include "rpucuda_piecewisestep_device.h"
 #include "rpucuda_powstep_device.h"
 #include "rpucuda_transfer_device.h"
 #include "rpucuda_vector_device.h"
@@ -62,6 +63,9 @@ AbstractRPUDeviceCuda<T>::createFrom(CudaContext *c, const AbstractRPUDevice<T> 
     return new PowStepRPUDeviceCuda<T>(c, static_cast<const PowStepRPUDevice<T> &>(rpu_device));
   case DeviceUpdateType::Custom:
     return new CustomRPUDeviceCuda<T>(c, static_cast<const CustomRPUDevice<T> &>(rpu_device));
+  case DeviceUpdateType::PiecewiseStep:
+    return new PiecewiseStepRPUDeviceCuda<T>(
+        c, static_cast<const PiecewiseStepRPUDevice<T> &>(rpu_device));
   default:
     RPU_FATAL("Pulsed device type not implemented in CUDA. Maybe not added to createFrom in "
               "rpucuda_simple_device.cu?");

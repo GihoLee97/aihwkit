@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 
-# (C) Copyright 2020, 2021 IBM. All Rights Reserved.
+# (C) Copyright 2020, 2021, 2022 IBM. All Rights Reserved.
 #
 # This code is licensed under the Apache License, Version 2.0. You may
 # obtain a copy of this license in the LICENSE.txt file in the root directory
@@ -68,7 +68,7 @@ class _AnalogConvNd(AnalogModuleBase, _ConvNd):
             padding_mode: str,
             rpu_config: Optional[RPUConfigAlias] = None,
             realistic_read_write: bool = False,
-            weight_scaling_omega: float = 0.0,
+            weight_scaling_omega: Optional[float] = None,
     ):
         # pylint: disable=too-many-arguments, too-many-locals
         if groups != 1:
@@ -91,7 +91,6 @@ class _AnalogConvNd(AnalogModuleBase, _ConvNd):
             out_channels,
             bias,
             realistic_read_write,
-            weight_scaling_omega,
             rpu_config.mapping
         )
         self.analog_tile = self._setup_tile(rpu_config)
@@ -100,11 +99,15 @@ class _AnalogConvNd(AnalogModuleBase, _ConvNd):
         self.register_analog_tile(self.analog_tile)
 
         # Set weights from the reset_parameters
-        self.set_weights(self.weight, self.bias)
+        self.set_weights(self.weight, self.bias, remap_weights=True,
+                         weight_scaling_omega=weight_scaling_omega)
 
         # Set the index matrices.
         self.fold_indices = Tensor().detach()
+        self.register_helper('fold_indices')
         self.input_size = 0
+        self.register_helper('input_size')
+        self.tensor_view = (-1,)  # type: Tuple[int, ...]
 
         # Unregister weight/bias as a parameter but keep it for syncs
         self.unregister_parameter('weight')
@@ -153,23 +156,20 @@ class _AnalogConvNd(AnalogModuleBase, _ConvNd):
         """
         raise NotImplementedError
 
-    def digital_bias_view(self) -> Tensor:
-        """Return the correct view to the digital bias """
-
-        raise NotImplementedError
-
     def forward(self, x_input: Tensor) -> Tensor:
         """Compute the forward pass."""
         input_size = x_input.numel() / x_input.size(0)
-        if not self.fold_indices.numel() or self.input_size != input_size:
+        if self.input_size != input_size or not self.analog_tile.is_indexed():
             self.recalculate_indexes(x_input)
 
         out = AnalogIndexedFunction.apply(
             self.analog_tile.get_analog_ctx(), x_input,
             self.analog_tile.shared_weights, not self.training)
 
+        out = self.analog_tile.apply_out_scaling(out, self.tensor_view)
+
         if self.digital_bias:
-            return out + self.digital_bias_view()
+            return out + self.bias.view(*self.tensor_view)
         return out
 
 
@@ -201,9 +201,9 @@ class AnalogConv1d(_AnalogConvNd):
         rpu_config: resistive processing unit configuration.
         realistic_read_write: whether to enable realistic read/write
             for setting initial weights and during reading of the weights.
-        weight_scaling_omega: the weight value that the current max
-            weight value will be scaled to. If zero, no weight scaling will
-            be performed.
+        weight_scaling_omega: If non-zero, the analog weights will be
+            scaled by ``weight_scaling_omega`` divided by the absolute
+            maximum value of the original weight matrix.
     """
     # pylint: disable=abstract-method
 
@@ -220,7 +220,7 @@ class AnalogConv1d(_AnalogConvNd):
             padding_mode: str = 'zeros',
             rpu_config: Optional[RPUConfigAlias] = None,
             realistic_read_write: bool = False,
-            weight_scaling_omega: float = 0.0
+            weight_scaling_omega: Optional[float] = None,
     ):
         # pylint: disable=too-many-arguments
         kernel_size = _single(kernel_size)
@@ -237,13 +237,14 @@ class AnalogConv1d(_AnalogConvNd):
             rpu_config, realistic_read_write, weight_scaling_omega
         )
 
+        self.tensor_view = (-1, 1)
+
     @classmethod
     def from_digital(
             cls,
             module: Conv1d,
             rpu_config: Optional[RPUConfigAlias] = None,
             realistic_read_write: bool = False,
-            weight_scaling_omega: float = 0.0,
     ) -> 'AnalogConv1d':
         """Return an AnalogConv1d layer from a torch Conv1d layer.
 
@@ -254,9 +255,6 @@ class AnalogConv1d(_AnalogConvNd):
                 Applied to all converted tiles.
             realistic_read_write: Whether to use closed-loop programming
                 when setting the weights. Applied to all converted tiles.
-            weight_scaling_omega: If non-zero, the analog weights will be
-                scaled by ``weight_scaling_omega`` divided by the absolute
-                maximum value of the original weight matrix.
 
                 Note:
                     Make sure that the weight max and min settings of the
@@ -276,7 +274,6 @@ class AnalogConv1d(_AnalogConvNd):
                             module.padding_mode,
                             rpu_config,
                             realistic_read_write,
-                            weight_scaling_omega,
                             )
 
         analog_module.set_weights(module.weight, module.bias)
@@ -341,11 +338,6 @@ class AnalogConv1d(_AnalogConvNd):
         image_sizes = [in_channels, x_height, d_height]
         return (fold_indices, image_sizes, input_size)
 
-    def digital_bias_view(self) -> Tensor:
-        """Return the correct view to the digital bias """
-
-        return self.bias.view(self.out_channels, 1)
-
 
 class AnalogConv2d(_AnalogConvNd):
     """2D convolution layer that uses an analog tile.
@@ -375,8 +367,9 @@ class AnalogConv2d(_AnalogConvNd):
         rpu_config: resistive processing unit configuration.
         realistic_read_write: whether to enable realistic read/write
             for setting initial weights and read out of weights.
-        weight_scaling_omega: the weight value where the max weight will be
-            scaled to. If zero, no weight scaling will be performed.
+        weight_scaling_omega: If non-zero, the analog weights will be
+            scaled by ``weight_scaling_omega`` divided by the absolute
+            maximum value of the original weight matrix.
     """
     # pylint: disable=abstract-method
 
@@ -393,7 +386,7 @@ class AnalogConv2d(_AnalogConvNd):
             padding_mode: str = 'zeros',
             rpu_config: Optional[RPUConfigAlias] = None,
             realistic_read_write: bool = False,
-            weight_scaling_omega: float = 0.0,
+            weight_scaling_omega: Optional[float] = None,
     ):
         # pylint: disable=too-many-arguments
         kernel_size = _pair(kernel_size)
@@ -407,13 +400,14 @@ class AnalogConv2d(_AnalogConvNd):
             rpu_config, realistic_read_write, weight_scaling_omega
         )
 
+        self.tensor_view = (-1, 1, 1)
+
     @classmethod
     def from_digital(
             cls,
             module: Conv2d,
             rpu_config: Optional[RPUConfigAlias] = None,
             realistic_read_write: bool = False,
-            weight_scaling_omega: float = 0.0,
     ) -> 'AnalogConv2d':
         """Return an AnalogConv2d layer from a torch Conv2d layer.
 
@@ -424,9 +418,6 @@ class AnalogConv2d(_AnalogConvNd):
                 Applied to all converted tiles.
             realistic_read_write: Whether to use closed-loop programming
                 when setting the weights. Applied to all converted tiles.
-            weight_scaling_omega: If non-zero, the analog weights will be
-                scaled by ``weight_scaling_omega`` divided by the absolute
-                maximum value of the original weight matrix.
 
                 Note:
                     Make sure that the weight max and min settings of the
@@ -446,7 +437,7 @@ class AnalogConv2d(_AnalogConvNd):
                             module.padding_mode,
                             rpu_config,
                             realistic_read_write,
-                            weight_scaling_omega)
+                            )
 
         analog_module.set_weights(module.weight, module.bias)
         return analog_module
@@ -500,11 +491,6 @@ class AnalogConv2d(_AnalogConvNd):
         image_sizes = [in_channels, x_height, x_width, d_height, d_width]
         return (fold_indices, image_sizes, input_size)
 
-    def digital_bias_view(self) -> Tensor:
-        """Return the correct view to the digital bias """
-
-        return self.bias.view(self.out_channels, 1, 1)
-
 
 class AnalogConv3d(_AnalogConvNd):
     """3D convolution layer that uses an analog tile.
@@ -534,8 +520,9 @@ class AnalogConv3d(_AnalogConvNd):
         rpu_config: resistive processing unit configuration.
         realistic_read_write: whether to enable realistic read/write
             for setting initial weights and read out of weights.
-        weight_scaling_omega: the weight value where the max weight will be
-            scaled to. If zero, no weight scaling will be performed.
+        weight_scaling_omega: If non-zero, the analog weights will be
+            scaled by ``weight_scaling_omega`` divided by the absolute
+            maximum value of the original weight matrix.
     """
     # pylint: disable=abstract-method
 
@@ -552,7 +539,7 @@ class AnalogConv3d(_AnalogConvNd):
             padding_mode: str = 'zeros',
             rpu_config: Optional[RPUConfigAlias] = None,
             realistic_read_write: bool = False,
-            weight_scaling_omega: float = 0.0,
+            weight_scaling_omega: Optional[float] = None,
     ):
         # pylint: disable=too-many-arguments
         kernel_size = _triple(kernel_size)
@@ -569,13 +556,14 @@ class AnalogConv3d(_AnalogConvNd):
             rpu_config, realistic_read_write, weight_scaling_omega
         )
 
+        self.tensor_view = (-1, 1, 1, 1)
+
     @classmethod
     def from_digital(
             cls,
             module: Conv3d,
             rpu_config: Optional[RPUConfigAlias] = None,
             realistic_read_write: bool = False,
-            weight_scaling_omega: float = 0.0,
     ) -> 'AnalogConv3d':
         """Return an AnalogConv3d layer from a torch Conv3d layer.
 
@@ -586,9 +574,6 @@ class AnalogConv3d(_AnalogConvNd):
                 Applied to all converted tiles.
             realistic_read_write: Whether to use closed-loop programming
                 when setting the weights. Applied to all converted tiles.
-            weight_scaling_omega: If non-zero, the analog weights will be
-                scaled by ``weight_scaling_omega`` divided by the absolute
-                maximum value of the original weight matrix.
 
                 Note:
                     Make sure that the weight max and min settings of the
@@ -608,7 +593,7 @@ class AnalogConv3d(_AnalogConvNd):
                             module.padding_mode,
                             rpu_config,
                             realistic_read_write,
-                            weight_scaling_omega)
+                            )
 
         analog_module.set_weights(module.weight, module.bias)
         return analog_module
@@ -686,8 +671,3 @@ class AnalogConv3d(_AnalogConvNd):
 
         image_sizes = [in_channels, x_depth, x_height, x_width, d_depth, d_height, d_width]
         return (fold_indices, image_sizes, input_size)
-
-    def digital_bias_view(self) -> Tensor:
-        """Return the correct view to the digital bias """
-
-        return self.bias.view(self.out_channels, 1, 1, 1)
