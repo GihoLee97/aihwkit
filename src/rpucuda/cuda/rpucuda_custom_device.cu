@@ -43,10 +43,14 @@ template <typename T> struct UpdateFunctorCustom {
       const float2 par_2,
       T &persistent_weight,
       const T *global_pars,
+      const int global_params_count,
       T noise_std_dw,
       curandState &local_state)
 
   {
+
+    UNUSED(global_params_count); // fixed
+
     // par_4 order (min_bound, scale_down, max_bound, scale_up )
     // global_pars see below
     // global_pars[0~]
