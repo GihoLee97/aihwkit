@@ -56,8 +56,8 @@ public:
       T ***w_coeff_down_a_ = rpu_device.getCoeffDownA();
       T ***w_coeff_down_b_ = rpu_device.getCoeffDownB();
       T ***w_coeff_down_c_ = rpu_device.getCoeffDownC();
-      float *tmp_cu_par = new float[6 * num_sectors_ + 2];
-      dev_cu_par_ = RPU::make_unique<CudaArray<float>>(this->context_, 6 * num_sectors_ + 2);
+      float *tmp_cu_par = new float[32];
+      dev_cu_par_ = RPU::make_unique<CudaArray<float>>(this->context_, 32);
 
       tmp_cu_par[0] = (float)rpu_device.getNumSectors();
       tmp_cu_par[1] = getPar().getScaledWriteNoise();

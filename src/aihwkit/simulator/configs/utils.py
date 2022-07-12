@@ -21,8 +21,8 @@ from typing import ClassVar, Type
 from aihwkit.simulator.configs.helpers import _PrintableMixin
 from aihwkit.simulator.rpu_base import devices, tiles
 
-
 # Helper enums.
+
 
 class BoundManagementType(Enum):
     """Bound management type.
@@ -710,7 +710,6 @@ class MappingParameter(_PrintableMixin):
 
         Some of these parameters have only an affect for modules that
         support tile mappings.
-
     """
 
     digital_bias: bool = True
@@ -727,6 +726,18 @@ class MappingParameter(_PrintableMixin):
     Note:
         ``digital_bias`` is supported by *all* analog modules.
     """
+
+    weight_scaling_omega: float = 0.0
+    """omega_scale is a user defined parameter used to scale the weights
+    while remapping these to cover the full range of values allowed"""
+
+    weight_scaling_omega_columnwise: bool = False
+    """Whether the weight matrix will be remapped column-wise over
+    the maximum device allowed value"""
+
+    learn_out_scaling_alpha: bool = False
+    """define the out_scaling_alpha as a learnable parameter
+    used to scale the output"""
 
     max_input_size: int = 512
     """Maximal input size (number of columns) of the weight matrix
